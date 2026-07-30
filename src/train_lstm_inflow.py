@@ -56,12 +56,14 @@ class SeriesForecastDataset(Dataset[tuple[Tensor, Tensor]]):
 
     def __init__(
         self,
-        scaled_values: np.ndarray,
+        scaled_features: np.ndarray,
+        scaled_targets: np.ndarray,
         starts: np.ndarray,
         lookback_hours: int,
         horizon_hours: int,
     ) -> None:
-        self.series = torch.as_tensor(scaled_values, dtype=torch.float32)
+        self.features = torch.as_tensor(scaled_features, dtype=torch.float32)
+        self.targets = torch.as_tensor(scaled_targets, dtype=torch.float32)
         self.starts = torch.as_tensor(starts, dtype=torch.long)
         self.lookback_hours = lookback_hours
         self.horizon_hours = horizon_hours
@@ -72,20 +74,20 @@ class SeriesForecastDataset(Dataset[tuple[Tensor, Tensor]]):
     def __getitem__(self, item: int) -> tuple[Tensor, Tensor]:
         start = int(self.starts[item])
         history_end = start + self.lookback_hours
-        features = self.series[start:history_end].unsqueeze(-1)
-        target = self.series[history_end : history_end + self.horizon_hours]
+        features = self.features[start:history_end]
+        target = self.targets[history_end : history_end + self.horizon_hours]
         return features, target
 
 
 class InflowLSTM(nn.Module):
-    """A direct multi-output LSTM for one-dimensional inflow histories."""
+    """A direct multi-output LSTM for multivariate inflow histories."""
 
     def __init__(
         self, hidden_size: int, num_layers: int, dropout: float, horizon_hours: int
     ) -> None:
         super().__init__()
         self.lstm = nn.LSTM(
-            input_size=1,
+            input_size=2,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0.0,
@@ -108,8 +110,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--data-path",
         type=Path,
-        default=root / "dataset" / "ban_chat_all_history_synthesized_full.csv",
-        help="Input CSV containing time_update and inflow_m3s columns.",
+        default=root / "dataset" / "ban_chat_all_history_synthesized_full_with_satellite_rainfall.csv",
+        help="Input CSV containing time_update, inflow_m3s, and precipitation_mm columns.",
     )
     parser.add_argument(
         "--model-path",
@@ -136,13 +138,19 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def load_inflow_series(data_path: Path) -> tuple[list[datetime], np.ndarray]:
+def parse_locale_float(value: str) -> float:
+    """Parse a numeric string that may use a comma as the decimal separator."""
+    return float(value.strip().replace(",", "."))
+
+
+def load_inflow_series(data_path: Path) -> tuple[list[datetime], np.ndarray, np.ndarray]:
     timestamps: list[datetime] = []
     inflows: list[float] = []
+    precipitations: list[float] = []
 
     with data_path.open(encoding="utf-8-sig", newline="") as data_file:
         reader = csv.DictReader(data_file)
-        required_columns = {"time_update", "inflow_m3s"}
+        required_columns = {"time_update", "inflow_m3s", "precipitation_mm"}
         missing_columns = required_columns.difference(reader.fieldnames or [])
         if missing_columns:
             raise ValueError(f"Dataset is missing required columns: {sorted(missing_columns)}")
@@ -155,18 +163,29 @@ def load_inflow_series(data_path: Path) -> tuple[list[datetime], np.ndarray]:
                     f"Timestamps must be strictly increasing; row {row_number} is {timestamp}."
                 )
             try:
-                inflow = float(row["inflow_m3s"])
+                inflow = parse_locale_float(row["inflow_m3s"])
             except (TypeError, ValueError) as error:
                 raise ValueError(f"Invalid inflow_m3s on row {row_number}: {row['inflow_m3s']!r}") from error
             if not np.isfinite(inflow):
                 raise ValueError(f"Non-finite inflow_m3s on row {row_number}: {inflow}")
+            try:
+                precipitation = parse_locale_float(row["precipitation_mm"])
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"Invalid precipitation_mm on row {row_number}: {row['precipitation_mm']!r}") from error
+            if not np.isfinite(precipitation):
+                raise ValueError(f"Non-finite precipitation_mm on row {row_number}: {precipitation}")
             timestamps.append(timestamp)
             inflows.append(inflow)
+            precipitations.append(precipitation)
             previous_timestamp = timestamp
 
     if not timestamps:
         raise ValueError("Dataset contains no rows.")
-    return timestamps, np.asarray(inflows, dtype=np.float64)
+    return (
+        timestamps,
+        np.asarray(inflows, dtype=np.float64),
+        np.asarray(precipitations, dtype=np.float64),
+    )
 
 
 def find_hourly_segments(timestamps: list[datetime]) -> list[tuple[int, int]]:
@@ -327,7 +346,7 @@ def main() -> None:
         raise ValueError("epochs, patience, and batch-size must all be positive.")
 
     set_seed(config.seed)
-    timestamps, inflows = load_inflow_series(arguments.data_path)
+    timestamps, inflows, precipitations = load_inflow_series(arguments.data_path)
     segments = find_hourly_segments(timestamps)
     split_starts, boundaries = sample_starts_by_split(segments, len(inflows), config)
     empty_splits = [name for name, starts in split_starts.items() if len(starts) == 0]
@@ -338,24 +357,31 @@ def main() -> None:
         )
 
     train_end = boundaries["train_end_row_exclusive"]
-    training_values = inflows[:train_end]
-    scaler_mean = float(np.mean(training_values))
-    scaler_std = float(np.std(training_values))
-    if scaler_std <= EPSILON:
+    training_inflows = inflows[:train_end]
+    training_precipitations = precipitations[:train_end]
+    inflow_mean = float(np.mean(training_inflows))
+    inflow_std = float(np.std(training_inflows))
+    precipitation_mean = float(np.mean(training_precipitations))
+    precipitation_std = float(np.std(training_precipitations))
+    if inflow_std <= EPSILON:
         raise ValueError("Training inflow values have zero variance; cannot normalize.")
-    scaled_inflows = ((inflows - scaler_mean) / scaler_std).astype(np.float32)
+    if precipitation_std <= EPSILON:
+        raise ValueError("Training precipitation values have zero variance; cannot normalize.")
+    scaled_inflows = ((inflows - inflow_mean) / inflow_std).astype(np.float32)
+    scaled_precipitations = ((precipitations - precipitation_mean) / precipitation_std).astype(np.float32)
+    scaled_features = np.column_stack([scaled_inflows, scaled_precipitations])
 
     seasonal_period = 24
-    if len(training_values) <= seasonal_period:
+    if len(training_inflows) <= seasonal_period:
         raise ValueError("Training period is too short to calculate the 24-hour MASE scale.")
     mase_scale = float(
-        np.mean(np.abs(training_values[seasonal_period:] - training_values[:-seasonal_period]))
+        np.mean(np.abs(training_inflows[seasonal_period:] - training_inflows[:-seasonal_period]))
     )
     if mase_scale <= EPSILON:
         raise ValueError("The 24-hour seasonal-naive MASE scale is zero.")
 
     datasets = {
-        name: SeriesForecastDataset(scaled_inflows, starts, config.lookback_hours, config.horizon_hours)
+        name: SeriesForecastDataset(scaled_features, scaled_inflows, starts, config.lookback_hours, config.horizon_hours)
         for name, starts in split_starts.items()
     }
     loaders = {
@@ -377,7 +403,7 @@ def main() -> None:
         "Samples: "
         + ", ".join(f"{name}={len(starts)}" for name, starts in split_starts.items())
     )
-    print(f"Device: {device}; train-only scaler mean={scaler_mean:.4f}, std={scaler_std:.4f}")
+    print(f"Device: {device}; inflow scaler mean={inflow_mean:.4f}, std={inflow_std:.4f}; precipitation scaler mean={precipitation_mean:.4f}, std={precipitation_std:.4f}")
 
     best_validation_mae = float("inf")
     best_epoch = 0
@@ -401,7 +427,7 @@ def main() -> None:
             training_items += batch_size
 
         validation_prediction, validation_actual = predict(
-            model, loaders["validation"], device, scaler_mean, scaler_std
+            model, loaders["validation"], device, inflow_mean, inflow_std
         )
         validation_mae = float(np.mean(np.abs(validation_prediction - validation_actual)))
         print(
@@ -425,9 +451,9 @@ def main() -> None:
     model.load_state_dict(best_state)
 
     validation_prediction, validation_actual = predict(
-        model, loaders["validation"], device, scaler_mean, scaler_std
+        model, loaders["validation"], device, inflow_mean, inflow_std
     )
-    test_prediction, test_actual = predict(model, loaders["test"], device, scaler_mean, scaler_std)
+    test_prediction, test_actual = predict(model, loaders["test"], device, inflow_mean, inflow_std)
     validation_metrics = metric_summary(validation_actual, validation_prediction, mase_scale)
     test_metrics = metric_summary(test_actual, test_prediction, mase_scale)
 
@@ -435,7 +461,10 @@ def main() -> None:
     checkpoint = {
         "model_state_dict": model.state_dict(),
         "config": asdict(config),
-        "scaler": {"mean": scaler_mean, "std": scaler_std},
+        "scaler": {
+            "inflow": {"mean": inflow_mean, "std": inflow_std},
+            "precipitation": {"mean": precipitation_mean, "std": precipitation_std},
+        },
         "split_boundaries": {
             **boundaries,
             "train_end_timestamp": timestamps[train_end - 1].isoformat(timespec="milliseconds"),
