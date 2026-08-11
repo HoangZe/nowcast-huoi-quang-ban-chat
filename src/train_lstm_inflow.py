@@ -35,7 +35,6 @@ import matplotlib.pyplot as plt
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%S.%f"
 EXPECTED_INTERVAL = timedelta(hours=1)
 EPSILON = 1e-8
-HOURS_PER_DAY = 24.0
 
 
 @dataclass(frozen=True)
@@ -88,7 +87,7 @@ class InflowLSTM(nn.Module):
     ) -> None:
         super().__init__()
         self.lstm = nn.LSTM(
-            input_size=6,
+            input_size=2,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0.0,
@@ -144,45 +143,14 @@ def parse_locale_float(value: str) -> float:
     return float(value.strip().replace(",", "."))
 
 
-def hour_of_day_float(value: str) -> float:
-    """Return the hour-of-day as a float (0-24) from an HH:MM:SS string."""
-    hour, minute, second = (int(part) for part in value.strip().split(":"))
-    return hour + minute / 60.0 + second / 3600.0
-
-
-def cyclic_encode(value: float, period: float) -> tuple[float, float]:
-    """Return (sin, cos) cyclic encoding of value over the given period."""
-    angle = 2.0 * np.pi * value / period
-    return float(np.sin(angle)), float(np.cos(angle))
-
-
-def load_inflow_series(
-    data_path: Path,
-) -> tuple[
-    list[datetime],
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-]:
+def load_inflow_series(data_path: Path) -> tuple[list[datetime], np.ndarray, np.ndarray]:
     timestamps: list[datetime] = []
     inflows: list[float] = []
     precipitations: list[float] = []
-    hour_of_days: list[float] = []
-    day_of_year_sins: list[float] = []
-    day_of_year_coss: list[float] = []
 
     with data_path.open(encoding="utf-8-sig", newline="") as data_file:
         reader = csv.DictReader(data_file)
-        required_columns = {
-            "time_update",
-            "inflow_m3s",
-            "precipitation_mm",
-            "hour",
-            "day_of_year_sin",
-            "day_of_year_cos",
-        }
+        required_columns = {"time_update", "inflow_m3s", "precipitation_mm"}
         missing_columns = required_columns.difference(reader.fieldnames or [])
         if missing_columns:
             raise ValueError(f"Dataset is missing required columns: {sorted(missing_columns)}")
@@ -206,30 +174,9 @@ def load_inflow_series(
                 raise ValueError(f"Invalid precipitation_mm on row {row_number}: {row['precipitation_mm']!r}") from error
             if not np.isfinite(precipitation):
                 raise ValueError(f"Non-finite precipitation_mm on row {row_number}: {precipitation}")
-            try:
-                hour_component = hour_of_day_float(row["hour"])
-            except (TypeError, ValueError) as error:
-                raise ValueError(f"Invalid hour on row {row_number}: {row['hour']!r}") from error
-            if not np.isfinite(hour_component):
-                raise ValueError(f"Non-finite hour on row {row_number}: {hour_component}")
-            try:
-                day_of_year_sin = parse_locale_float(row["day_of_year_sin"])
-            except (TypeError, ValueError) as error:
-                raise ValueError(f"Invalid day_of_year_sin on row {row_number}: {row['day_of_year_sin']!r}") from error
-            if not np.isfinite(day_of_year_sin):
-                raise ValueError(f"Non-finite day_of_year_sin on row {row_number}: {day_of_year_sin}")
-            try:
-                day_of_year_cos = parse_locale_float(row["day_of_year_cos"])
-            except (TypeError, ValueError) as error:
-                raise ValueError(f"Invalid day_of_year_cos on row {row_number}: {row['day_of_year_cos']!r}") from error
-            if not np.isfinite(day_of_year_cos):
-                raise ValueError(f"Non-finite day_of_year_cos on row {row_number}: {day_of_year_cos}")
             timestamps.append(timestamp)
             inflows.append(inflow)
             precipitations.append(precipitation)
-            hour_of_days.append(hour_component)
-            day_of_year_sins.append(day_of_year_sin)
-            day_of_year_coss.append(day_of_year_cos)
             previous_timestamp = timestamp
 
     if not timestamps:
@@ -238,9 +185,6 @@ def load_inflow_series(
         timestamps,
         np.asarray(inflows, dtype=np.float64),
         np.asarray(precipitations, dtype=np.float64),
-        np.asarray(hour_of_days, dtype=np.float64),
-        np.asarray(day_of_year_sins, dtype=np.float64),
-        np.asarray(day_of_year_coss, dtype=np.float64),
     )
 
 
@@ -322,20 +266,17 @@ def metric_summary(
 ) -> dict[str, dict[str, float]]:
     def metrics_for(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
         absolute_error = np.abs(y_pred - y_true)
-        observed_variance = float(np.sum(np.square(y_true - np.mean(y_true))))
-        nse = (
-            1.0 - float(np.sum(np.square(y_true - y_pred))) / observed_variance
-            if observed_variance > EPSILON
-            else float("nan")
-        )
+        squared_error = np.square(y_pred - y_true)
+        observed_variance = np.sum(np.square(y_true - np.mean(y_true)))
+        nse = 1.0 - np.sum(squared_error) / (observed_variance + EPSILON)
         return {
             "mae": float(np.mean(absolute_error)),
-            "rmse": float(np.sqrt(np.mean(np.square(y_pred - y_true)))),
+            "rmse": float(np.sqrt(np.mean(squared_error))),
             "smape_percent": float(
                 np.mean(200.0 * absolute_error / (np.abs(y_true) + np.abs(y_pred) + EPSILON))
             ),
             "mase": float(np.mean(absolute_error) / mase_scale),
-            "nse": nse,
+            "nse": float(nse),
         }
 
     summary = {"overall": metrics_for(actual, predicted)}
@@ -348,11 +289,15 @@ def metric_summary(
 
 def print_metrics(title: str, summary: dict[str, dict[str, float]]) -> None:
     print(f"\n{title}")
-    print(f"{'Horizon':<10} {'MAE':>12} {'RMSE':>12} {'sMAPE (%)':>14} {'MASE':>12} {'NSE':>10}")
+    print(
+        f"{'Horizon':<10} {'MAE':>12} {'RMSE':>12} {'sMAPE (%)':>14} "
+        f"{'MASE':>12} {'NSE':>10}"
+    )
     for horizon, values in summary.items():
         print(
             f"{horizon:<10} {values['mae']:>12.4f} {values['rmse']:>12.4f} "
-            f"{values['smape_percent']:>14.4f} {values['mase']:>12.4f} {values['nse']:>10.4f}"
+            f"{values['smape_percent']:>14.4f} {values['mase']:>12.4f} "
+            f"{values['nse']:>10.4f}"
         )
 
 
@@ -409,9 +354,7 @@ def main() -> None:
         raise ValueError("epochs, patience, and batch-size must all be positive.")
 
     set_seed(config.seed)
-    timestamps, inflows, precipitations, hour_of_days, day_of_year_sins, day_of_year_coss = (
-        load_inflow_series(arguments.data_path)
-    )
+    timestamps, inflows, precipitations = load_inflow_series(arguments.data_path)
     segments = find_hourly_segments(timestamps)
     split_starts, boundaries = sample_starts_by_split(segments, len(inflows), config)
     empty_splits = [name for name, starts in split_starts.items() if len(starts) == 0]
@@ -434,22 +377,7 @@ def main() -> None:
         raise ValueError("Training precipitation values have zero variance; cannot normalize.")
     scaled_inflows = ((inflows - inflow_mean) / inflow_std).astype(np.float32)
     scaled_precipitations = ((precipitations - precipitation_mean) / precipitation_std).astype(np.float32)
-    hour_sins, hour_coss = zip(*(cyclic_encode(hour, HOURS_PER_DAY) for hour in hour_of_days))
-    scaled_hour_sins = np.asarray(hour_sins, dtype=np.float32)
-    scaled_hour_coss = np.asarray(hour_coss, dtype=np.float32)
-    # Cyclic hour/day_of_year features are already in [-1, 1]; don't z-score them.
-    scaled_day_of_year_sins = day_of_year_sins.astype(np.float32)
-    scaled_day_of_year_coss = day_of_year_coss.astype(np.float32)
-    scaled_features = np.column_stack(
-        [
-            scaled_inflows,
-            scaled_precipitations,
-            scaled_hour_sins,
-            scaled_hour_coss,
-            scaled_day_of_year_sins,
-            scaled_day_of_year_coss,
-        ]
-    )
+    scaled_features = np.column_stack([scaled_inflows, scaled_precipitations])
 
     seasonal_period = 24
     if len(training_inflows) <= seasonal_period:
@@ -470,7 +398,7 @@ def main() -> None:
         "test": make_loader(datasets["test"], config.batch_size, shuffle=False),
     }
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = InflowLSTM(
         config.hidden_size, config.num_layers, config.dropout, config.horizon_hours
     ).to(device)
@@ -484,7 +412,6 @@ def main() -> None:
         + ", ".join(f"{name}={len(starts)}" for name, starts in split_starts.items())
     )
     print(f"Device: {device}; inflow scaler mean={inflow_mean:.4f}, std={inflow_std:.4f}; precipitation scaler mean={precipitation_mean:.4f}, std={precipitation_std:.4f}")
-    print("Features: inflow, precipitation, hour_sin, hour_cos, day_of_year_sin, day_of_year_cos (cyclic features used raw in [-1, 1])")
 
     best_validation_mae = float("inf")
     best_epoch = 0
@@ -546,14 +473,6 @@ def main() -> None:
             "inflow": {"mean": inflow_mean, "std": inflow_std},
             "precipitation": {"mean": precipitation_mean, "std": precipitation_std},
         },
-        "feature_columns": [
-            "inflow_m3s",
-            "precipitation_mm",
-            "hour_sin",
-            "hour_cos",
-            "day_of_year_sin",
-            "day_of_year_cos",
-        ],
         "split_boundaries": {
             **boundaries,
             "train_end_timestamp": timestamps[train_end - 1].isoformat(timespec="milliseconds"),
