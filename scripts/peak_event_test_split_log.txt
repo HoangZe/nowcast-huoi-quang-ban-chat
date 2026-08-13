@@ -1,0 +1,80 @@
+================================================================================
+PEAK EVENT INFERENCE TEST
+================================================================================
+Split filter: test
+
+Checkpoint: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/models/lstm_inflow.pth
+Config: {'lookback_hours': 48, 'horizon_hours': 6, 'hidden_size': 256, 'num_layers': 2, 'dropout': 0.2}
+Checkpoint splits: train=[0,64730), validation=[64730,78601), test=[78601,...)
+Detected LSTM input size: 2 (1=inflow only, 2=inflow+precipitation)
+
+Dataset rows: 92472
+Time range: 2016-01-01 07:00:00  ->  2026-07-20 06:00:00
+Model loaded on cpu.
+Inflow scaler: mean=116.2105, std=197.2922
+MASE scale (24h seasonal naive): 54.3984
+
+Detected peak events (inflow >= 850 m3/s): 92
+Filtered to split 'test': 11 / 92 peak events (leakage-free if 'test').
+Total inference samples across all events: 1240
+
+================================================================================
+OVERALL PEAK-EVENT METRICS (all categories combined)
+================================================================================
+
+Overall peak-event metrics
+Horizon             MAE         RMSE      sMAPE (%)         MASE        NSE
+overall         89.9553     173.8328        18.7677       1.6536     0.8181
+t+1             64.3353     122.8712        12.8211       1.1827     0.9148
+t+2             74.0203     138.7173        16.1597       1.3607     0.8889
+t+3             88.8824     166.3139        18.6607       1.6339     0.8351
+t+4             95.2581     183.3455        20.0253       1.7511     0.7945
+t+5            104.5523     199.9633        21.6444       1.9220     0.7493
+t+6            112.6833     213.7896        23.2947       2.0714     0.7064
+
+================================================================================
+CATEGORY: small
+================================================================================
+
+Peak-event metrics - small
+Horizon             MAE         RMSE      sMAPE (%)         MASE        NSE
+overall         80.7021     153.7682        19.0571       1.4835     0.7475
+t+1             55.2717     104.4535        12.7338       1.0161     0.8903
+t+2             66.1462     122.6587        16.4405       1.2160     0.8438
+t+3             79.3665     146.6606        18.9152       1.4590     0.7699
+t+4             86.4036     162.3576        20.4365       1.5883     0.7135
+t+5             94.3367     177.5350        22.0135       1.7342     0.6533
+t+6            102.6881     191.1134        23.8032       1.8877     0.5923
+
+Category 'big': no events with valid inference windows.
+
+================================================================================
+CATEGORY: major_and_large
+================================================================================
+
+Peak-event metrics - major_and_large
+Horizon             MAE         RMSE      sMAPE (%)         MASE        NSE
+overall        209.6224     339.4492        15.0243       3.8535     0.7447
+t+1            181.5516     263.1414        13.9503       3.3374     0.8493
+t+2            175.8529     271.1546        12.5291       3.2327     0.8414
+t+3            211.9469     327.4264        15.3705       3.8962     0.7655
+t+4            209.7700     356.9998        14.7061       3.8562     0.7168
+t+5            236.6655     386.6275        16.8711       4.3506     0.6596
+t+6            241.9474     405.5225        16.7188       4.4477     0.6183
+
+Results saved to: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/scripts/peak_event_inference_results.json
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250523_1400_peak875.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250608_1000_peak1616.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250621_1300_peak1570.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250701_1700_peak1455.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250929_1900_peak1130.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20251007_0200_peak1079.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20260609_1200_peak1832.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20260706_1000_peak1963.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20260708_1600_peak953.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_major_and_large_20260717_0900_peak3110.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20260718_1200_peak1163.png
+
+================================================================================
+DONE
+================================================================================

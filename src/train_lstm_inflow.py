@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Train a gap-aware, direct six-hour LSTM inflow forecaster.
+"""Train a gap-aware six-hour inflow forecaster using an LSTM encoder-decoder.
+
+The model is a Seq2Seq LSTM with Bahdanau (additive) attention: an encoder LSTM
+reads the lookback window and retains every hidden state; a decoder LSTM emits
+one forecast per horizon (t+1 ... t+6), attending back over the encoder states
+to pull in the relevant past rainfall/inflow moment for each step. The decoder
+attends only over the *past* window, so no future information leaks into the
+forecasts. During training it is teacher-forced; during inference it free-runs.
+
+The default loss is a differentiable peak-weighted NSE (nse_peak) that
+emphasizes high-flow samples to counter peak attenuation. It can be switched to
+the original Huber loss with --loss huber for A/B comparison.
 
 Only contiguous hourly observations are used in an input/target window.  A
 non-hourly timestamp transition starts a new segment, so no model sample can
@@ -39,15 +50,15 @@ EPSILON = 1e-8
 
 @dataclass(frozen=True)
 class TrainingConfig:
-    lookback_hours: int = 330
+    lookback_hours: int = 48
     horizon_hours: int = 6
-    hidden_size: int = 64
+    hidden_size: int = 256
     num_layers: int = 2
     dropout: float = 0.2
     learning_rate: float = 1e-3
     batch_size: int = 512
-    max_epochs: int = 40
-    patience: int = 7
+    max_epochs: int = 50
+    patience: int = 10
     seed: int = 42
 
 
@@ -100,6 +111,123 @@ class InflowLSTM(nn.Module):
         return self.output(sequence_output[:, -1, :])
 
 
+class BahdanauAttention(nn.Module):
+    """Additive (Bahdanau) attention over encoder hidden states.
+
+    At each decoder step, a context vector is computed as a weighted sum of the
+    encoder hidden states, where the weights are learned scores that indicate
+    which past moments (e.g. a rainfall burst) are most relevant.
+    """
+
+    def __init__(self, hidden_size: int) -> None:
+        super().__init__()
+        # Project the encoder and decoder hidden states into a common space.
+        self.encoder_projection = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.decoder_projection = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.score = nn.Linear(hidden_size, 1, bias=False)
+
+    def forward(
+        self, decoder_hidden: Tensor, encoder_outputs: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        # encoder_outputs: (batch, lookback, hidden)
+        aligned_encoder = torch.tanh(self.encoder_projection(encoder_outputs))
+        # decoder_hidden: (batch, hidden) -> unsqueeze for broadcasting
+        aligned_decoder = torch.tanh(
+            self.decoder_projection(decoder_hidden).unsqueeze(1)
+        )
+        # Raw alignment scores, then softmax over the lookback axis.
+        scores = self.score(aligned_encoder + aligned_decoder).squeeze(-1)  # (batch, lookback)
+        weights = torch.softmax(scores, dim=-1)
+        context = torch.bmm(weights.unsqueeze(1), encoder_outputs).squeeze(1)  # (batch, hidden)
+        return context, weights
+
+
+class Seq2SeqAttentionLSTM(nn.Module):
+    """An LSTM encoder-decoder with Bahdanau attention for multi-horizon inflow.
+
+    The encoder LSTM reads the lookback window and retains every hidden state.
+    The decoder LSTM then produces one forecast per horizon (t+1 ... t+6), and at
+    each step uses attention to pull in the relevant past rainfall/inflow moment
+    from the encoder states. The decoder attends only over the *past* window:
+    no future information is leaked into the forecasts.
+
+    During training the decoder is teacher-forced with the true target values;
+    during inference it free-runs on its own predictions.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_layers: int,
+        dropout: float,
+        horizon_hours: int,
+        feature_size: int = 2,
+    ) -> None:
+        super().__init__()
+        self.horizon_hours = horizon_hours
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+
+        self.encoder = nn.LSTM(
+            input_size=feature_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,
+            batch_first=True,
+        )
+        self.attention = BahdanauAttention(hidden_size)
+        # Decoder input: the previous inflow value / SOS token concatenated with
+        # the attention context vector.
+        self.decoder = nn.LSTM(
+            input_size=hidden_size + 1,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,
+            batch_first=True,
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.output = nn.Linear(hidden_size, 1)
+        # Learned start-of-sequence token (scalar, same scale as the targets).
+        self.start_token = nn.Parameter(torch.zeros(1))
+
+    def forward(self, features: Tensor, target: Tensor | None = None) -> Tensor:
+        batch_size = features.size(0)
+        device = features.device
+        # features: (batch, lookback, feature_size)
+        encoder_outputs, (encoder_hidden, encoder_cell) = self.encoder(features)
+
+        # Initialize the decoder state from the encoder's final state.
+        decoder_hidden = encoder_hidden
+        decoder_cell = encoder_cell
+        last_hidden = decoder_hidden[-1]  # (batch, hidden), top layer for attention
+
+        context, _ = self.attention(last_hidden, encoder_outputs)
+
+        # First decoder input: learned SOS token + initial context.
+        start_value = self.start_token.view(1, 1).expand(batch_size, 1)
+        decoder_input = torch.cat([start_value, context], dim=-1)  # (batch, hidden+1)
+
+        outputs: list[Tensor] = []
+        for step in range(self.horizon_hours):
+            output, (decoder_hidden, decoder_cell) = self.decoder(
+                decoder_input.unsqueeze(1),
+                (decoder_hidden, decoder_cell),
+            )
+            output = output[:, 0, :]  # (batch, hidden)
+            prediction = self.output(self.dropout(output))[:, 0]  # (batch,)
+            outputs.append(prediction)
+
+            # Build the next decoder input.
+            last_hidden = decoder_hidden[-1]
+            context, _ = self.attention(last_hidden, encoder_outputs)
+            next_value = target[:, step] if target is not None else prediction
+            decoder_input = torch.cat(
+                [next_value.unsqueeze(1), context], dim=-1
+            )
+
+        return torch.stack(outputs, dim=1)
+
+
 def project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -129,6 +257,19 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--patience", type=int, default=TrainingConfig.patience)
     parser.add_argument("--batch-size", type=int, default=TrainingConfig.batch_size)
     parser.add_argument("--seed", type=int, default=TrainingConfig.seed)
+    parser.add_argument(
+        "--loss",
+        type=str,
+        choices=("huber", "nse_peak"),
+        default="nse_peak",
+        help="Loss function: 'huber' (SmoothL1) or 'nse_peak' (peak-weighted NSE).",
+    )
+    parser.add_argument(
+        "--peak-weight",
+        type=float,
+        default=3.0,
+        help="Peak emphasis for the nse_peak loss (weights in [1, 1+peak_weight]).",
+    )
     return parser.parse_args()
 
 
@@ -239,6 +380,31 @@ def sample_starts_by_split(
 
 def make_loader(dataset: Dataset[tuple[Tensor, Tensor]], batch_size: int, shuffle: bool) -> DataLoader:
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0)
+
+
+def nse_peak_loss(
+    prediction: Tensor,
+    target: Tensor,
+    peak_weight: float = 3.0,
+) -> Tensor:
+    """Differentiable peak-weighted NSE loss.
+
+    Minimizing this maximizes a weighted NSE. Samples are weighted continuously
+    by their target magnitude, so high-flow (peak) samples are emphasized while
+    every sample still contributes. The weights lie in [1, 1 + peak_weight].
+
+    loss = 1 - NSE_weighted
+         = sum(w * (target - pred)^2) / sum(w * (target - target_mean)^2)
+    """
+    differences = target - prediction
+    squared_error = differences * differences
+    weights = 1.0 + peak_weight * (
+        target.abs() / (target.abs().max() + EPSILON)
+    )
+    weighted_numerator = (weights * squared_error).sum()
+    weighted_denominator = (weights * (target - target.mean()) ** 2).sum()
+    nse = 1.0 - weighted_numerator / (weighted_denominator + EPSILON)
+    return 1.0 - nse
 
 
 def inverse_scale(values: np.ndarray, mean: float, std: float) -> np.ndarray:
@@ -399,11 +565,18 @@ def main() -> None:
     }
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    model = InflowLSTM(
+    model = Seq2SeqAttentionLSTM(
         config.hidden_size, config.num_layers, config.dropout, config.horizon_hours
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
-    loss_function = nn.SmoothL1Loss()
+    if arguments.loss == "huber":
+        loss_function = nn.SmoothL1Loss()
+        loss_label = "huber"
+    else:
+        loss_function = lambda pred, target: nse_peak_loss(
+            pred, target, peak_weight=arguments.peak_weight
+        )
+        loss_label = f"nse_peak(w={arguments.peak_weight:g})"
 
     print(f"Dataset rows: {len(inflows)}")
     print(f"Hourly segments: {len(segments)} (non-hourly boundaries: {len(segments) - 1})")
@@ -411,6 +584,7 @@ def main() -> None:
         "Samples: "
         + ", ".join(f"{name}={len(starts)}" for name, starts in split_starts.items())
     )
+    print(f"Model: Seq2SeqAttentionLSTM; loss: {loss_label}")
     print(f"Device: {device}; inflow scaler mean={inflow_mean:.4f}, std={inflow_std:.4f}; precipitation scaler mean={precipitation_mean:.4f}, std={precipitation_std:.4f}")
 
     best_validation_mae = float("inf")
@@ -426,7 +600,9 @@ def main() -> None:
             features = features.to(device)
             target = target.to(device)
             optimizer.zero_grad()
-            output = model(features)
+            # Teacher forcing: pass the true target so the decoder conditions on
+            # the observed inflow at each step during training.
+            output = model(features, target)
             loss = loss_function(output, target)
             loss.backward()
             optimizer.step()
@@ -440,7 +616,7 @@ def main() -> None:
         validation_mae = float(np.mean(np.abs(validation_prediction - validation_actual)))
         print(
             f"Epoch {epoch:03d}/{config.max_epochs}: "
-            f"train_huber={training_loss / training_items:.6f}, validation_mae={validation_mae:.4f}"
+            f"train_{loss_label}={training_loss / training_items:.6f}, validation_mae={validation_mae:.4f}"
         )
 
         if validation_mae < best_validation_mae:
@@ -492,7 +668,10 @@ def main() -> None:
             "best_epoch": best_epoch,
             "best_validation_mae": best_validation_mae,
             "selection_metric": "validation_mae",
-            "loss": "SmoothL1Loss",
+            "model": "Seq2SeqAttentionLSTM",
+            "loss": loss_label,
+            "loss_type": arguments.loss,
+            "peak_weight": arguments.peak_weight,
         },
         "metrics": {"validation": validation_metrics, "test": test_metrics},
     }

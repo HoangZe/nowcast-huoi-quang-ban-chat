@@ -1,0 +1,170 @@
+================================================================================
+PEAK EVENT INFERENCE TEST
+================================================================================
+
+Checkpoint: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/models/lstm_inflow.pth
+Config: {'lookback_hours': 48, 'horizon_hours': 6, 'hidden_size': 256, 'num_layers': 2, 'dropout': 0.2}
+Detected LSTM input size: 2 (1=inflow only, 2=inflow+precipitation)
+
+Dataset rows: 92472
+Time range: 2016-01-01 07:00:00  ->  2026-07-20 06:00:00
+Model loaded on cpu.
+Inflow scaler: mean=116.2105, std=197.2922
+MASE scale (24h seasonal naive): 54.3984
+
+Detected peak events (inflow >= 850 m3/s): 92
+Total inference samples across all events: 11041
+
+================================================================================
+OVERALL PEAK-EVENT METRICS (all categories combined)
+================================================================================
+
+Overall peak-event metrics
+Horizon             MAE         RMSE      sMAPE (%)         MASE        NSE
+overall         92.0295     184.7817        16.7786       1.6918     0.8348
+t+1             56.7100     118.8839        10.5564       1.0425     0.9327
+t+2             74.0361     146.8445        13.8898       1.3610     0.8966
+t+3             89.4572     172.7509        16.5379       1.6445     0.8560
+t+4            100.2819     193.6899        18.2356       1.8435     0.8179
+t+5            111.0946     215.6605        19.9357       2.0422     0.7729
+t+6            120.5970     235.1612        21.5161       2.2169     0.7284
+
+================================================================================
+CATEGORY: small
+================================================================================
+
+Peak-event metrics - small
+Horizon             MAE         RMSE      sMAPE (%)         MASE        NSE
+overall         85.4983     153.7402        16.6072       1.5717     0.8176
+t+1             52.6360      95.9945        10.3543       0.9676     0.9304
+t+2             69.7399     122.9166        13.7840       1.2820     0.8847
+t+3             83.7364     146.3501        16.4024       1.5393     0.8351
+t+4             93.1940     162.7065        18.0793       1.7132     0.7946
+t+5            102.5817     179.4441        19.7265       1.8857     0.7486
+t+6            111.1022     193.3932        21.2968       2.0424     0.7057
+
+================================================================================
+CATEGORY: big
+================================================================================
+
+Peak-event metrics - big
+Horizon             MAE         RMSE      sMAPE (%)         MASE        NSE
+overall        136.7617     294.5625        22.2429       2.5141     0.8636
+t+1             79.7260     172.7670        15.7645       1.4656     0.9532
+t+2            100.5177     207.7214        18.6188       1.8478     0.9322
+t+3            125.9777     254.0537        21.6096       2.3158     0.8986
+t+4            151.0464     305.4613        23.7914       2.7767     0.8533
+t+5            172.5730     356.5992        25.9289       3.1724     0.8000
+t+6            190.7292     403.2279        27.7439       3.5062     0.7442
+
+================================================================================
+CATEGORY: major_and_large
+================================================================================
+
+Peak-event metrics - major_and_large
+Horizon             MAE         RMSE      sMAPE (%)         MASE        NSE
+overall        168.0441     415.6812        15.1485       3.0891     0.8133
+t+1            108.2558     294.2079         9.6785       1.9901     0.9070
+t+2            126.5256     340.2945        11.7381       2.3259     0.8755
+t+3            158.2882     383.8249        14.6144       2.9098     0.8412
+t+4            180.9034     427.5434        16.2658       3.3255     0.8023
+t+5            207.4948     477.1887        18.5178       3.8144     0.7527
+t+6            226.7970     525.8924        20.0764       4.1692     0.6987
+
+Results saved to: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/scripts/peak_event_inference_results.json
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20160525_0900_peak912.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20160605_0500_peak1129.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20160701_0900_peak996.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20160820_0300_peak2080.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170618_0900_peak1142.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170619_0900_peak968.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170628_0700_peak1926.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170629_1300_peak966.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170701_1100_peak1049.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170702_1100_peak1335.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_big_20170703_1100_peak2484.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170705_0300_peak954.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170706_1300_peak912.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170707_1300_peak1165.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170709_1500_peak1472.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_major_and_large_20170714_0700_peak4812.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170802_1500_peak989.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170815_1300_peak1068.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170817_1100_peak893.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170905_2300_peak908.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20170908_0700_peak909.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20180615_0900_peak1273.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_major_and_large_20180624_1500_peak4995.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20180626_0000_peak1348.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20180627_1700_peak1115.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20180803_1500_peak1305.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20180804_1500_peak1400.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20180831_0500_peak1038.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20180902_1000_peak1480.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20180903_1600_peak955.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190217_2300_peak858.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190529_1500_peak1000.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190601_1500_peak1041.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190608_0900_peak1154.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190611_0900_peak961.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190624_1100_peak1788.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190710_1500_peak1267.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190720_1100_peak883.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190723_1700_peak1252.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20190910_0300_peak1395.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20200424_0000_peak917.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20200606_1500_peak1816.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20200626_1300_peak1438.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_big_20200710_2200_peak2235.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_major_and_large_20200712_1400_peak4972.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20200813_0600_peak1386.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20200817_1300_peak1304.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20200819_0000_peak1595.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20200909_0800_peak1104.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20200910_0800_peak893.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20200912_0700_peak919.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20201001_1200_peak1363.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_big_20210525_1200_peak2437.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20210625_1000_peak1217.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_major_and_large_20210630_2200_peak4576.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20210705_1400_peak1001.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20210715_1100_peak1359.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20210815_1600_peak1539.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20210817_0800_peak1196.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20220524_0700_peak1319.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20220525_1000_peak1436.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20220606_1400_peak1017.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20220611_1600_peak1074.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20220614_1100_peak1572.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20220615_2300_peak1404.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20230624_0900_peak1391.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20230728_1200_peak1091.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20230804_2200_peak902.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20230806_1200_peak1807.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_big_20230808_0500_peak2404.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20230809_0700_peak1210.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20230811_2300_peak1012.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20240605_0800_peak1696.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20240610_1400_peak1259.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20240615_1600_peak1001.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20240703_0800_peak1733.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20240731_0200_peak1551.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20240801_0500_peak1398.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20240802_1300_peak1294.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20240908_0500_peak1028.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20240909_0600_peak1970.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250523_1400_peak875.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250608_1000_peak1616.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250621_1300_peak1570.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250701_1700_peak1455.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20250929_1900_peak1130.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20251007_0200_peak1079.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20260609_1200_peak1832.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20260706_1000_peak1963.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20260708_1600_peak953.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_major_and_large_20260717_0900_peak3110.png
+Plot saved: /Users/hon/Documents/GitHub/nowcast-huoi-quang-ban-chat/src/plots/peak_events/peak_small_20260718_1200_peak1163.png
+
+================================================================================
+DONE
+================================================================================
