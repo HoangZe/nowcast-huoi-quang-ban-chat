@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """Train a gap-aware six-hour inflow forecaster using an LSTM encoder-decoder.
 
-The model is a Seq2Seq LSTM with Bahdanau (additive) attention: an encoder LSTM
-reads the lookback window and retains every hidden state; a decoder LSTM emits
-one forecast per horizon (t+1 ... t+6), attending back over the encoder states
-to pull in the relevant past rainfall/inflow moment for each step. The decoder
-attends only over the *past* window, so no future information leaks into the
-forecasts. During training it is teacher-forced; during inference it free-runs.
+The model is a Seq2Seq LSTM with Bahdanau (additive) attention and a dedicated
+rainfall channel:
+
+- An encoder LSTM reads the lookback window and retains every hidden state.
+- A RainfallEncoder (dilated causal convs) compresses the past rainfall
+  subsequence into a compact embedding.
+- A decoder LSTM emits one forecast per horizon (t+1 ... t+6). At each step it
+  uses attention to pull in the relevant past moment and also receives the
+  rainfall embedding, so the decoder can actually consume the precipitation
+  signal. The decoder attends only over the *past* window: no future
+  information leaks into the forecasts.
+
+During training the decoder is normally teacher-forced, but with
+--scheduled-sampling the teacher-forcing probability is annealed toward
+free-running so the decoder learns to correct its own errors (fixes exposure
+bias / long-horizon lag). During inference it always free-runs.
 
 The default loss is a differentiable peak-weighted NSE (nse_peak) that
 emphasizes high-flow samples to counter peak attenuation. It can be switched to
@@ -32,6 +42,7 @@ from typing import Iterable
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -60,6 +71,9 @@ class TrainingConfig:
     max_epochs: int = 50
     patience: int = 10
     seed: int = 42
+    scheduled_sampling: bool = False
+    scheduled_sampling_end_prob: float = 0.1
+    rainfall_embed_dim: int = 16
 
 
 class SeriesForecastDataset(Dataset[tuple[Tensor, Tensor]]):
@@ -109,6 +123,36 @@ class InflowLSTM(nn.Module):
     def forward(self, features: Tensor) -> Tensor:
         sequence_output, _ = self.lstm(features)
         return self.output(sequence_output[:, -1, :])
+
+
+class RainfallEncoder(nn.Module):
+    """Reduce the past rainfall subsequence to a compact embedding.
+
+    A small temporal-convolutional subnet with dilated causal convolutions
+    summarises the past rainfall window into a fixed-size vector. This gives the
+    decoder an explicit rainfall channel instead of relying only on the diluted
+    attention context.
+    """
+
+    def __init__(self, embed_dim: int, lookback_hours: int) -> None:
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.conv1 = nn.Conv1d(1, 16, kernel_size=3, dilation=1, padding=1)
+        self.conv2 = nn.Conv1d(16, 32, kernel_size=3, dilation=2, padding=2)
+        self.conv3 = nn.Conv1d(32, 64, kernel_size=3, dilation=4, padding=4)
+        self.output = nn.Linear(64, embed_dim)
+        # Pooling dimension is the temporal axis (lookback_hours).
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
+
+    def forward(self, precipitation: Tensor) -> Tensor:
+        # precipitation: (batch, lookback, 1) -> (batch, 1, lookback)
+        x = precipitation.transpose(1, 2)
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = self.adaptive_pool(x)  # (batch, 64, 1)
+        x = x.squeeze(-1)  # (batch, 64)
+        return self.output(x)  # (batch, embed_dim)
 
 
 class BahdanauAttention(nn.Module):
@@ -162,11 +206,14 @@ class Seq2SeqAttentionLSTM(nn.Module):
         dropout: float,
         horizon_hours: int,
         feature_size: int = 2,
+        rainfall_embed_dim: int = 16,
+        lookback_hours: int = 48,
     ) -> None:
         super().__init__()
         self.horizon_hours = horizon_hours
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        self.rainfall_embed_dim = rainfall_embed_dim
 
         self.encoder = nn.LSTM(
             input_size=feature_size,
@@ -176,10 +223,13 @@ class Seq2SeqAttentionLSTM(nn.Module):
             batch_first=True,
         )
         self.attention = BahdanauAttention(hidden_size)
-        # Decoder input: the previous inflow value / SOS token concatenated with
-        # the attention context vector.
+        # A dedicated rainfall channel so the decoder can actually consume the
+        # precipitation signal instead of relying only on the diluted context.
+        self.rainfall_encoder = RainfallEncoder(rainfall_embed_dim, lookback_hours)
+        # Decoder input: previous inflow / SOS + attention context + rainfall
+        # embedding.
         self.decoder = nn.LSTM(
-            input_size=hidden_size + 1,
+            input_size=hidden_size + 1 + rainfall_embed_dim,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0.0,
@@ -190,11 +240,20 @@ class Seq2SeqAttentionLSTM(nn.Module):
         # Learned start-of-sequence token (scalar, same scale as the targets).
         self.start_token = nn.Parameter(torch.zeros(1))
 
-    def forward(self, features: Tensor, target: Tensor | None = None) -> Tensor:
+    def forward(
+        self,
+        features: Tensor,
+        target: Tensor | None = None,
+        teacher_forcing_prob: float = 1.0,
+    ) -> Tensor:
         batch_size = features.size(0)
         device = features.device
-        # features: (batch, lookback, feature_size)
+        # features: (batch, lookback, feature_size) where column 1 is precip.
         encoder_outputs, (encoder_hidden, encoder_cell) = self.encoder(features)
+
+        # Rainfall embedding from the past window (column index 1).
+        precipitation = features[:, :, 1:2]  # (batch, lookback, 1)
+        rainfall_embedding = self.rainfall_encoder(precipitation)
 
         # Initialize the decoder state from the encoder's final state.
         decoder_hidden = encoder_hidden
@@ -203,9 +262,11 @@ class Seq2SeqAttentionLSTM(nn.Module):
 
         context, _ = self.attention(last_hidden, encoder_outputs)
 
-        # First decoder input: learned SOS token + initial context.
+        # First decoder input: learned SOS token + context + rainfall embedding.
         start_value = self.start_token.view(1, 1).expand(batch_size, 1)
-        decoder_input = torch.cat([start_value, context], dim=-1)  # (batch, hidden+1)
+        decoder_input = torch.cat(
+            [start_value, context, rainfall_embedding], dim=-1
+        )  # (batch, hidden + 1 + embed)
 
         outputs: list[Tensor] = []
         for step in range(self.horizon_hours):
@@ -220,9 +281,17 @@ class Seq2SeqAttentionLSTM(nn.Module):
             # Build the next decoder input.
             last_hidden = decoder_hidden[-1]
             context, _ = self.attention(last_hidden, encoder_outputs)
-            next_value = target[:, step] if target is not None else prediction
+            if target is not None:
+                # Scheduled sampling: with prob teacher_forcing_prob use the
+                # true value, otherwise use our own prediction (free-run).
+                use_teacher = torch.rand(batch_size, device=device) < teacher_forcing_prob
+                next_value = torch.where(
+                    use_teacher, target[:, step], prediction
+                )
+            else:
+                next_value = prediction
             decoder_input = torch.cat(
-                [next_value.unsqueeze(1), context], dim=-1
+                [next_value.unsqueeze(1), context, rainfall_embedding], dim=-1
             )
 
         return torch.stack(outputs, dim=1)
@@ -269,6 +338,23 @@ def parse_arguments() -> argparse.Namespace:
         type=float,
         default=3.0,
         help="Peak emphasis for the nse_peak loss (weights in [1, 1+peak_weight]).",
+    )
+    parser.add_argument(
+        "--scheduled-sampling",
+        action="store_true",
+        help="Enable scheduled sampling (anneal teacher-forcing -> free-running).",
+    )
+    parser.add_argument(
+        "--scheduled-sampling-end-prob",
+        type=float,
+        default=TrainingConfig.scheduled_sampling_end_prob,
+        help="Final teacher-forcing probability at the last epoch for scheduled sampling.",
+    )
+    parser.add_argument(
+        "--rainfall-embed-dim",
+        type=int,
+        default=TrainingConfig.rainfall_embed_dim,
+        help="Dimension of the rainfall embedding fed to the decoder.",
     )
     return parser.parse_args()
 
@@ -515,9 +601,16 @@ def main() -> None:
         patience=arguments.patience,
         batch_size=arguments.batch_size,
         seed=arguments.seed,
+        scheduled_sampling=arguments.scheduled_sampling,
+        scheduled_sampling_end_prob=arguments.scheduled_sampling_end_prob,
+        rainfall_embed_dim=arguments.rainfall_embed_dim,
     )
     if config.max_epochs < 1 or config.patience < 1 or config.batch_size < 1:
         raise ValueError("epochs, patience, and batch-size must all be positive.")
+    if not 0.0 <= config.scheduled_sampling_end_prob <= 1.0:
+        raise ValueError("scheduled-sampling-end-prob must be in [0, 1].")
+    if config.rainfall_embed_dim < 1:
+        raise ValueError("rainfall-embed-dim must be positive.")
 
     set_seed(config.seed)
     timestamps, inflows, precipitations = load_inflow_series(arguments.data_path)
@@ -566,7 +659,12 @@ def main() -> None:
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = Seq2SeqAttentionLSTM(
-        config.hidden_size, config.num_layers, config.dropout, config.horizon_hours
+        config.hidden_size,
+        config.num_layers,
+        config.dropout,
+        config.horizon_hours,
+        rainfall_embed_dim=config.rainfall_embed_dim,
+        lookback_hours=config.lookback_hours,
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
     if arguments.loss == "huber":
@@ -584,7 +682,11 @@ def main() -> None:
         "Samples: "
         + ", ".join(f"{name}={len(starts)}" for name, starts in split_starts.items())
     )
-    print(f"Model: Seq2SeqAttentionLSTM; loss: {loss_label}")
+    print(
+        f"Model: Seq2SeqAttentionLSTM; loss: {loss_label}; "
+        f"scheduled_sampling={config.scheduled_sampling}; "
+        f"rainfall_embed_dim={config.rainfall_embed_dim}"
+    )
     print(f"Device: {device}; inflow scaler mean={inflow_mean:.4f}, std={inflow_std:.4f}; precipitation scaler mean={precipitation_mean:.4f}, std={precipitation_std:.4f}")
 
     best_validation_mae = float("inf")
@@ -596,19 +698,33 @@ def main() -> None:
         model.train()
         training_loss = 0.0
         training_items = 0
+        if config.scheduled_sampling:
+            # Linear annealing from full teacher-forcing (1.0) down to the
+            # configured end probability at the final epoch.
+            teacher_forcing_prob = max(
+                config.scheduled_sampling_end_prob,
+                1.0 - (epoch - 1) / (config.max_epochs - 1)
+                * (1.0 - config.scheduled_sampling_end_prob),
+            )
+        else:
+            teacher_forcing_prob = 1.0
         for features, target in loaders["train"]:
             features = features.to(device)
             target = target.to(device)
             optimizer.zero_grad()
-            # Teacher forcing: pass the true target so the decoder conditions on
-            # the observed inflow at each step during training.
-            output = model(features, target)
+            # Scheduled sampling: mixture of teacher-forcing and free-running.
+            output = model(features, target, teacher_forcing_prob=teacher_forcing_prob)
             loss = loss_function(output, target)
             loss.backward()
             optimizer.step()
             batch_size = features.size(0)
             training_loss += loss.item() * batch_size
             training_items += batch_size
+
+        if config.scheduled_sampling:
+            print(
+                f"Epoch {epoch:03d}: teacher_forcing_prob={teacher_forcing_prob:.4f}"
+            )
 
         validation_prediction, validation_actual = predict(
             model, loaders["validation"], device, inflow_mean, inflow_std
@@ -672,6 +788,9 @@ def main() -> None:
             "loss": loss_label,
             "loss_type": arguments.loss,
             "peak_weight": arguments.peak_weight,
+            "scheduled_sampling": config.scheduled_sampling,
+            "scheduled_sampling_end_prob": config.scheduled_sampling_end_prob,
+            "rainfall_embed_dim": config.rainfall_embed_dim,
         },
         "metrics": {"validation": validation_metrics, "test": test_metrics},
     }
